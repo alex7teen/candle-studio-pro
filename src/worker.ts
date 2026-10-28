@@ -1,4 +1,4 @@
-export interface Env { DB: any; ASSETS: {fetch(request:Request):Promise<Response>}; BOOTSTRAP_SECRET?: string }
+export interface Env { DB: any; ASSETS: {fetch(request:Request):Promise<Response>}; }
 const json=(body:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers}});
 const bytes=(n=32)=>crypto.getRandomValues(new Uint8Array(n));
 const hex=(b:Uint8Array)=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');
@@ -17,19 +17,9 @@ async function handler(req:Request,env:Env):Promise<Response>{
  if(!allowedOrigin(req))return json({error:'Invalid origin'},403);
  if(!['GET','POST','PUT'].includes(req.method))return json({error:'Method not allowed'},405);
  if(path==='/api/health')return json({ok:true});
- if(path==='/api/setup'&&req.method==='POST'){
-  const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first();
-  if((count?.n||0)>0)return json({error:'Workspace already initialized'},409);
-  if(!env.BOOTSTRAP_SECRET||env.BOOTSTRAP_SECRET.length<20)return json({error:'Server setup secret not configured'},503);
-  const b=await payload(req);if(!b||clean(b.setupCode)!==env.BOOTSTRAP_SECRET)return json({error:'Invalid setup code'},403);
-  const email=clean(b.email).toLowerCase(),password=clean(b.password),name=clean(b.name);
-  if(!validEmail(email)||password.length<12||name.length<2)return json({error:'Valid email, name and 12+ character password required'},400);
-  const salt=hex(bytes(16)),id=crypto.randomUUID();
-  try{await env.DB.prepare('INSERT INTO users(id,email,display_name,password_hash,salt,role) VALUES(?,?,?,?,?,?)').bind(id,email,name,await hashPassword(password,salt),salt,'admin').run()}catch{return json({error:'Setup failed; retry or sign in'},409)}
-  return json({ok:true});
- }
+ if(path==='/api/setup')return json({error:'Public registration is disabled'},403);
  if(path==='/api/login'&&req.method==='POST'){
-  const b=await payload(req);const email=clean(b?.email).toLowerCase(),password=clean(b?.password);
+  const b=await payload(req);const username=clean(b?.username).toLowerCase(),email=username==='alex'?'alex@accounts.cozyalco.invalid':username==='corina'?'corina@accounts.cozyalco.invalid':'',password=clean(b?.password);
   const user=await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email).first();
   const dummySalt='00000000000000000000000000000000';
   const computed=await hashPassword(password,user?.salt||dummySalt);
@@ -72,16 +62,7 @@ async function handler(req:Request,env:Env):Promise<Response>{
   const users=await env.DB.prepare('SELECT id,email,display_name AS name,role FROM users ORDER BY created_at').all();
   return json({users:users.results});
  }
- if(path==='/api/users'&&req.method==='POST'){
-  if(user.role!=='admin')return json({error:'Admin only'},403);
-  const b=await payload(req);const email=clean(b?.email).toLowerCase(),name=clean(b?.name),password=clean(b?.password);
-  if(!validEmail(email)||name.length<2||password.length<12)return json({error:'Valid email, name and 12+ character password required'},400);
-  const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first();
-  if((count?.n||0)>=2)return json({error:'This workspace is limited to two accounts'},409);
-  const salt=hex(bytes(16));
-  try{await env.DB.prepare('INSERT INTO users(id,email,display_name,password_hash,salt,role) VALUES(?,?,?,?,?,?)').bind(crypto.randomUUID(),email,name,await hashPassword(password,salt),'member').run()}catch{return json({error:'Email already registered'},409)}
-  return json({ok:true},201);
- }
+ if(path==='/api/users'&&req.method==='POST')return json({error:'Account creation is disabled'},403);
  if(path==='/api/password'&&req.method==='POST'){
   const b=await payload(req);const old=clean(b?.currentPassword),next=clean(b?.newPassword);
   if(next.length<12)return json({error:'New password must contain at least 12 characters'},400);
