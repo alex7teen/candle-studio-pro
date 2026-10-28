@@ -27,14 +27,25 @@ async function handler(req:Request,env:Env):Promise<Response>{
  }
  if(path==='/api/setup')return json({error:'Public registration is disabled'},403);
  if(path==='/api/login'&&req.method==='POST'){
-  const b=await payload(req);const username=clean(b?.username).toLowerCase(),email=username==='alex'?'alex@accounts.cozyalco.invalid':username==='corina'?'corina@accounts.cozyalco.invalid':'',password=clean(b?.password);
-  const user=await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email).first();
-  const dummySalt='00000000000000000000000000000000';
-  const computed=await hashPassword(password,user?.salt||dummySalt);
-  if(!user||computed!==user.password_hash)return json({error:'Incorrect email or password'},401);
-  const token=hex(bytes(32)),age=60*60*24*7;
-  await env.DB.prepare('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)').bind(await sha(token),user.id,Date.now()+age*1000).run();
-  return json({user:{id:user.id,email:user.email,name:user.display_name,role:user.role}},200,{'set-cookie':cookie(token,age)});
+  let stage='read_request';
+  try{
+   const b=await payload(req);
+   const username=clean(b?.username).toLowerCase();
+   const email=username==='alex'?'alex@accounts.cozyalco.invalid':username==='corina'?'corina@accounts.cozyalco.invalid':'';
+   const password=clean(b?.password);
+   if(!email)return json({error:'Incorrect username or password'},401);
+   stage='read_user';
+   const user=await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email).first();
+   if(!user)return json({error:'Incorrect username or password'},401);
+   if(typeof user.salt!=='string'||typeof user.password_hash!=='string'){console.error('Login user record has invalid credential fields');return json({error:'Account credentials require repair'},503)}
+   stage='verify_password';
+   const computed=await hashPassword(password,user.salt);
+   if(computed!==user.password_hash)return json({error:'Incorrect username or password'},401);
+   stage='create_session';
+   const token=hex(bytes(32)),age=60*60*24*7;
+   await env.DB.prepare('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)').bind(await sha(token),user.id,Date.now()+age*1000).run();
+   return json({user:{id:user.id,email:user.email,name:user.display_name,role:user.role}},200,{'set-cookie':cookie(token,age)});
+  }catch(e){console.error('Login failed at stage: '+stage,e instanceof Error?e.name+': '+e.message:String(e));return json({error:'Login service error',stage},500)}
  }
  const user=await session(req,env);
  if(!user)return json({error:'Not signed in'},401);
