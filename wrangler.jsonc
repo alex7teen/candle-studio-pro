@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "candle-studio-pro-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "652efd59-b1e8-4280-a9c8-91a0e284de68",
       "migrations_dir": "migrations"
     }
   ]
