@@ -62,3 +62,18 @@ deployment does not add server storage or third-party account integrations.
 
 References: [Workers SPA routing](https://developers.cloudflare.com/workers/static-assets/routing/single-page-application/)
 and [React on Pages](https://developers.cloudflare.com/pages/framework-guides/deploy-a-react-site/).
+
+## Two-person Cloudflare D1 setup (required before deployment)
+
+**This change introduces a Worker backend. Do not deploy until D1 is created and bound.**
+
+1. In Cloudflare dashboard > Storage & databases > D1, create a database named `candle-studio-pro-db`.
+2. Copy its database UUID into `wrangler.jsonc` as `d1_databases[0].database_id`, replacing `REPLACE_WITH_D1_DATABASE_ID`. This is a database identifier, not a secret.
+3. In Cloudflare Workers project > Settings > Variables and Secrets, add a **secret** named `BOOTSTRAP_SECRET` with a unique random value of at least 20 characters. Never commit it to GitHub. Use the same secret for the first-time setup form.
+4. Run D1 migration against the remote database: `npx wrangler d1 migrations apply candle-studio-pro-db --remote`. This must happen before the API can work. For a dashboard-only workflow, use D1 Console to execute the statements from `migrations/0001_init.sql` once.
+5. Deploy via Cloudflare Workers Builds, with build `npm run build`, deploy `npx wrangler deploy`, root blank, branch `main`.
+6. Open the site, choose **First-time setup**, enter your name, email, password (12+ characters) and the setup secret. Only the first account can use this one-time route.
+7. Sign in, open Settings and create Corina's second account. Give her a temporary password privately; she can change it using the `/api/password` endpoint (a UI for password change is still pending).
+8. **Existing browser data is not automatically migrated.** Export a JSON backup from the old deployment *before* activating this backend. After login, restore it using Settings. Be aware that restoring overwrites the shared workspace and requires coordination.
+
+The shared workspace is stored as a versioned JSON document in D1. The server rejects stale revisions with HTTP 409; the frontend requires reload after a conflict. This is a first iteration, not a row-level transactional inventory system or real-time multiuser synchronization. Passwords use PBKDF2-SHA256, 210,000 iterations and per-user salts; sessions are HTTP-only Secure SameSite cookies. No public registration is available. Back up D1 separately using Cloudflare's supported backup/export tools.
