@@ -5,6 +5,7 @@ export interface IntegrationEnv {
   INTEGRATION_ENCRYPTION_KEY?: string;
   SHOPIFY_CLIENT_ID?: string;
   SHOPIFY_CLIENT_SECRET?: string;
+  SHOPIFY_SHOP?: string;
   META_APP_ID?: string;
   META_APP_SECRET?: string;
   META_GRAPH_VERSION?: string;
@@ -128,7 +129,8 @@ async function start(req: Request, env: IntegrationEnv, user: Admin, provider: P
   if (!configured(env, provider)) return fail('setup_required', 503);
   if (req.headers.get('origin') !== origin(env)) return fail('invalid_origin', 403);
   const body = await req.json() as { shop?: string };
-  const shop = provider === 'shopify' ? shopDomain(body.shop) : '';
+  const shop = provider === 'shopify' ? shopDomain(body.shop || env.SHOPIFY_SHOP) : '';
+  if (provider === 'shopify' && env.SHOPIFY_SHOP && shop !== shopDomain(env.SHOPIFY_SHOP)) return fail('shop_not_allowed', 403);
   const state = random(), browser = random(), verifier = random();
   const stateHash = await digest(state);
   const sessionToken = readCookie(req, 'cs_session');
@@ -290,7 +292,8 @@ export async function handleIntegrations(req: Request, env: IntegrationEnv, getU
       let schemaReady = true;
       try { accounts = (await env.DB.prepare('SELECT provider,account_id,name,connected_at,updated_at FROM integration_accounts ORDER BY provider,name').all()).results || []; }
       catch { schemaReady = false; }
-      return json({ schemaReady, providers: ids.map(id => ({ id, ready: schemaReady && configured(env, id) })), accounts });
+      return json({ schemaReady, shopifyShop: env.SHOPIFY_SHOP ? shopDomain(env.SHOPIFY_SHOP) : null,
+        providers: ids.map(id => ({ id, ready: schemaReady && configured(env, id) })), accounts });
     }
     if (parts.length === 4 && parts[3] === 'connect' && ids.includes(parts[2] as Provider) && req.method === 'POST') return await start(req, env, user, parts[2] as Provider);
     if (parts.length === 5 && accountProviders.includes(parts[2] as AccountProvider) && req.method === 'POST') {

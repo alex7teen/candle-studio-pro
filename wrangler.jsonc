@@ -5,6 +5,7 @@
   "compatibility_date": "2026-10-28",
   "vars": {
     "INTEGRATION_ORIGIN": "https://candle-studio-pro.algonlinesrl.workers.dev",
+    "SHOPIFY_SHOP": "01i1f9-h4.myshopify.com",
     "META_GRAPH_VERSION": "v24.0"
   },
   "assets": {

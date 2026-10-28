@@ -4,7 +4,7 @@ import './integrations.css';
 
 type Provider = 'shopify' | 'meta' | 'tiktok' | 'etsy';
 type Account = { provider: string; account_id: string; name: string; connected_at: number };
-type Status = { schemaReady: boolean; providers: { id: Provider; ready: boolean }[]; accounts: Account[] };
+type Status = { schemaReady: boolean; shopifyShop?: string | null; providers: { id: Provider; ready: boolean }[]; accounts: Account[] };
 type Preview = { kind: string; hasMore: boolean; items: { id: string; title: string; detail: string }[] };
 const channels: { id: string; auth: Provider; name: string; mark: string; description: string }[] = [
   { id: 'shopify', auth: 'shopify', name: 'Shopify', mark: 'S', description: 'View your products and finished product stock from cozyalco.co.uk.' },
@@ -17,6 +17,7 @@ const messages: Record<string, string> = {
   connected: 'Your account is connected. You can now load its latest data.',
   setup_required: 'Account setup is needed before this service can be connected.',
   shop_domain_required: 'Enter the original store address ending in .myshopify.com. Find it in Shopify → Settings → Domains.',
+  shop_not_allowed: 'This workspace is configured for a different Shopify store. Use the store shown in Settings.',
   invalid_authorization: 'This authorization expired or could not be verified. Please connect again.',
   authorization_cancelled: 'Authorization was cancelled. Your existing connections have not changed.',
   no_eligible_accounts: 'No eligible business account was found. Check the accounts and permissions selected during authorization.',
@@ -40,7 +41,11 @@ export function IntegrationsPanel() {
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState('');
   const [previews, setPreviews] = useState<Record<string, Preview>>({});
-  const load = async () => { setStatus(await api('integrations')); };
+  const load = async () => {
+    const result = await api('integrations') as Status;
+    setStatus(result);
+    if (result.shopifyShop) setShop(result.shopifyShop);
+  };
   useEffect(() => {
     load().catch(() => setError('Connections could not be loaded. Refresh the page or sign in again.'));
     const params = new URLSearchParams(window.location.search);
@@ -89,7 +94,7 @@ export function IntegrationsPanel() {
       return <section className="card connection-card" key={channel.id} aria-label={channel.name}>
         <div className="card-title"><div className="connection-brand"><span className={`channel-mark channel-${channel.id}`} aria-hidden="true">{channel.mark}</span><h3>{channel.name}</h3></div><span className="pill">{accounts.length ? 'Connected' : ready ? 'Not connected' : status ? 'Setup needed' : 'Loading…'}</span></div>
         <p className="muted">{channel.description}</p>
-        {channel.id === 'shopify' && <label className="form-stack">Shopify store address<input aria-label="Shopify store address" placeholder="your-store.myshopify.com" value={shop} onChange={e => setShop(e.target.value)} autoComplete="off"/><small>Find your original address in Shopify → Settings → Domains. Your public website is cozyalco.co.uk.</small></label>}
+        {channel.id === 'shopify' && <label className="form-stack">Shopify store address<input aria-label="Shopify store address" placeholder="your-store.myshopify.com" value={shop} readOnly={Boolean(status?.shopifyShop)} onChange={e => setShop(e.target.value)} autoComplete="off"/><small>{status?.shopifyShop ? 'Your configured Shopify store. Connect below when account setup is complete.' : 'Find your original address in Shopify → Settings → Domains.'} Your public website is cozyalco.co.uk.</small></label>}
         {accounts.map(account => {
           const key = `${account.provider}/${encodeURIComponent(account.account_id)}`, data = previews[key];
           return <div className="connected-account" key={key}>

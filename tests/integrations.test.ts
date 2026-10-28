@@ -82,6 +82,17 @@ describe('integration security', () => {
     expect(status.accounts).toEqual([]);
     expect((await handle(post('etsy/connect'))).status).toBe(503);
   });
+  it('prefills the configured store and prevents connecting a different shop', async () => {
+    env.SHOPIFY_SHOP = 'configured.myshopify.com';
+    const status = await (await handle(new Request(`${origin}/api/integrations`))).json();
+    expect(status.shopifyShop).toBe('configured.myshopify.com');
+    const flow = await begin('shopify');
+    expect(flow.url.hostname).toBe('configured.myshopify.com');
+    const response = await handle(post('shopify/connect', { shop: 'other.myshopify.com' }));
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe('shop_not_allowed');
+    expect(db.prepare('SELECT count(*) AS n FROM integration_oauth_states').get()!.n).toBe(1);
+  });
   it('rejects callbacks from a different browser and after logout or expiry', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch');
     const flow = await begin('etsy');

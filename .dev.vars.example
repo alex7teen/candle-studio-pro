@@ -3,6 +3,7 @@
 # Production origin is configured in wrangler.jsonc.
 INTEGRATION_ORIGIN=https://your-https-development-host.example
 INTEGRATION_ENCRYPTION_KEY=
+SHOPIFY_SHOP=your-test-store.myshopify.com
 SHOPIFY_CLIENT_ID=
 SHOPIFY_CLIENT_SECRET=
 META_APP_ID=
