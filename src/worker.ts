@@ -1,9 +1,9 @@
+import { hashPassword, equalPasswordHash } from './password';
 export interface Env { DB: any; ASSETS: {fetch(request:Request):Promise<Response>}; }
 const json=(body:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers}});
 const bytes=(n=32)=>crypto.getRandomValues(new Uint8Array(n));
 const hex=(b:Uint8Array)=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');
 const sha=async(s:string)=>hex(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))));
-async function hashPassword(password:string,salt:string){const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);return hex(new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode(salt),iterations:210000,hash:'SHA-256'},key,256)))}
 const cookie=(token:string,maxAge:number)=>`cs_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/api; Max-Age=${maxAge}`;
 const clean=(s:unknown)=>typeof s==='string'?s.trim():'';
 const validEmail=(s:string)=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)&&s.length<=254;
@@ -40,7 +40,7 @@ async function handler(req:Request,env:Env):Promise<Response>{
    if(typeof user.salt!=='string'||typeof user.password_hash!=='string'){console.error('Login user record has invalid credential fields');return json({error:'Account credentials require repair'},503)}
    stage='verify_password';
    const computed=await hashPassword(password,user.salt);
-   if(computed!==user.password_hash)return json({error:'Incorrect username or password'},401);
+   if(!equalPasswordHash(computed,user.password_hash))return json({error:'Incorrect username or password'},401);
    stage='create_session';
    const token=hex(bytes(32)),age=60*60*24*7;
    await env.DB.prepare('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)').bind(await sha(token),user.id,Date.now()+age*1000).run();
@@ -86,7 +86,7 @@ async function handler(req:Request,env:Env):Promise<Response>{
   const b=await payload(req);const old=clean(b?.currentPassword),next=clean(b?.newPassword);
   if(next.length<12)return json({error:'New password must contain at least 12 characters'},400);
   const stored=await env.DB.prepare('SELECT salt,password_hash FROM users WHERE id=?').bind(user.id).first();
-  if(!stored||await hashPassword(old,stored.salt)!==stored.password_hash)return json({error:'Current password is incorrect'},403);
+  if(!stored||!equalPasswordHash(await hashPassword(old,stored.salt),stored.password_hash))return json({error:'Current password is incorrect'},403);
   const salt=hex(bytes(16));await env.DB.prepare('UPDATE users SET salt=?,password_hash=? WHERE id=?').bind(salt,await hashPassword(next,salt),user.id).run();
   await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(user.id).run();
   return json({ok:true},200,{'set-cookie':cookie('',0)});

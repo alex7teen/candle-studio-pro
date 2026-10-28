@@ -77,3 +77,13 @@ and [React on Pages](https://developers.cloudflare.com/pages/framework-guides/de
 8. **Existing browser data is not automatically migrated.** Export a JSON backup from the old deployment *before* activating this backend. After login, restore it using Settings. Be aware that restoring overwrites the shared workspace and requires coordination.
 
 The shared workspace is stored as a versioned JSON document in D1. The server rejects stale revisions with HTTP 409; the frontend requires reload after a conflict. This is a first iteration, not a row-level transactional inventory system or real-time multiuser synchronization. Passwords use PBKDF2-SHA256, 210,000 iterations and per-user salts; sessions are HTTP-only Secure SameSite cookies. No public registration is available. Back up D1 separately using Cloudflare's supported backup/export tools.
+
+## Login PBKDF2 runtime compatibility
+
+Existing D1 credentials remain PBKDF2-SHA256 with 210,000 iterations, a 32-byte derived key, and the salt encoded as UTF-8 text. The portable @noble/hashes implementation preserves these parameters because Workers rejects native PBKDF2 above 100,000 iterations (including node:crypto). Lowering the count would invalidate existing credentials. No database migration, reset, or credential rewrite is needed; deploy code only.
+
+This portable implementation requires Workers Paid CPU capacity. Free's 10 ms CPU limit is insufficient; async yielding does not reset CPU accounting. Paid defaults to 30 seconds unless an account/project override sets a lower limit. Confirm the deployed CPU setting and inspect CPU metrics for login and password change after deployment; use rate limiting for the public login route. Do not enable billing automatically. Local tests and dry runs do not establish production CPU usage.
+
+Validation: npm test uses synthetic records and compares with Node PBKDF2 at the original parameters, disables native deriveBits to emulate the production restriction, and checks correct/incorrect login with session-only writes. Never log passwords, credential hashes, or raw D1 user records.
+
+References: https://github.com/cloudflare/workerd/issues/1346 and https://developers.cloudflare.com/workers/platform/limits/ .
