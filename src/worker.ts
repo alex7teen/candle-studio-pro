@@ -1,4 +1,4 @@
-export interface Env { DB: D1Database; ASSETS: Fetcher; BOOTSTRAP_SECRET?: string }
+export interface Env { DB: any; ASSETS: {fetch(request:Request):Promise<Response>}; BOOTSTRAP_SECRET?: string }
 const json=(body:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers}});
 const bytes=(n=32)=>crypto.getRandomValues(new Uint8Array(n));
 const hex=(b:Uint8Array)=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');
@@ -9,7 +9,7 @@ const clean=(s:unknown)=>typeof s==='string'?s.trim():'';
 const validEmail=(s:string)=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)&&s.length<=254;
 const allowedOrigin=(req:Request)=>{const origin=req.headers.get('origin');return !origin||origin===new URL(req.url).origin};
 async function payload(req:Request){try{return await req.json() as Record<string,unknown>}catch{return null}}
-async function session(req:Request,env:Env){const token=req.headers.get('cookie')?.match(/(?:^|;\s*)cs_session=([^;]+)/)?.[1];if(!token)return null;return env.DB.prepare('SELECT users.id,users.email,users.display_name,users.role FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token_hash=? AND sessions.expires_at>?').bind(await sha(token),Date.now()).first<{id:string;email:string;display_name:string;role:string}>()}
+async function session(req:Request,env:Env){const token=req.headers.get('cookie')?.match(/(?:^|;\s*)cs_session=([^;]+)/)?.[1];if(!token)return null;return env.DB.prepare('SELECT users.id,users.email,users.display_name,users.role FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token_hash=? AND sessions.expires_at>?').bind(await sha(token),Date.now()).first()}
 function checkWorkspace(d:any){return d&&typeof d==='object'&&!Array.isArray(d)&&['purchases','items','movements','products','batches','orders','posts'].every(k=>Array.isArray(d[k]))&&d.settings&&typeof d.settings==='object'}
 async function handler(req:Request,env:Env):Promise<Response>{
  const path=new URL(req.url).pathname;
@@ -18,7 +18,7 @@ async function handler(req:Request,env:Env):Promise<Response>{
  if(!['GET','POST','PUT'].includes(req.method))return json({error:'Method not allowed'},405);
  if(path==='/api/health')return json({ok:true});
  if(path==='/api/setup'&&req.method==='POST'){
-  const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first<{n:number}>();
+  const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first();
   if((count?.n||0)>0)return json({error:'Workspace already initialized'},409);
   if(!env.BOOTSTRAP_SECRET||env.BOOTSTRAP_SECRET.length<20)return json({error:'Server setup secret not configured'},503);
   const b=await payload(req);if(!b||clean(b.setupCode)!==env.BOOTSTRAP_SECRET)return json({error:'Invalid setup code'},403);
@@ -30,7 +30,7 @@ async function handler(req:Request,env:Env):Promise<Response>{
  }
  if(path==='/api/login'&&req.method==='POST'){
   const b=await payload(req);const email=clean(b?.email).toLowerCase(),password=clean(b?.password);
-  const user=await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email).first<any>();
+  const user=await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email).first();
   const dummySalt='00000000000000000000000000000000';
   const computed=await hashPassword(password,user?.salt||dummySalt);
   if(!user||computed!==user.password_hash)return json({error:'Incorrect email or password'},401);
@@ -47,14 +47,14 @@ async function handler(req:Request,env:Env):Promise<Response>{
   return json({ok:true},200,{'set-cookie':cookie('',0)});
  }
  if(path==='/api/workspace'&&req.method==='GET'){
-  const row=await env.DB.prepare('SELECT data,revision FROM workspace WHERE id=1').first<{data:string;revision:number}>();
+  const row=await env.DB.prepare('SELECT data,revision FROM workspace WHERE id=1').first();
   return json({data:row?JSON.parse(row.data):null,revision:row?.revision??0});
  }
  if(path==='/api/workspace'&&req.method==='PUT'){
   const b=await payload(req);
   if(!b||!checkWorkspace(b.data)||!Number.isInteger(b.revision))return json({error:'Invalid workspace data or revision'},400);
   const serialized=JSON.stringify(b.data);if(serialized.length>2_000_000)return json({error:'Workspace exceeds 2 MB'},413);
-  const current=await env.DB.prepare('SELECT revision FROM workspace WHERE id=1').first<{revision:number}>();
+  const current=await env.DB.prepare('SELECT revision FROM workspace WHERE id=1').first();
   if(!current){
    if(b.revision!==0)return json({error:'Outdated workspace; reload'},409);
    const inserted=await env.DB.prepare('INSERT OR IGNORE INTO workspace(id,data,revision,updated_by) VALUES(1,?,1,?)').bind(serialized,user.id).run();
@@ -76,7 +76,7 @@ async function handler(req:Request,env:Env):Promise<Response>{
   if(user.role!=='admin')return json({error:'Admin only'},403);
   const b=await payload(req);const email=clean(b?.email).toLowerCase(),name=clean(b?.name),password=clean(b?.password);
   if(!validEmail(email)||name.length<2||password.length<12)return json({error:'Valid email, name and 12+ character password required'},400);
-  const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first<{n:number}>();
+  const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first();
   if((count?.n||0)>=2)return json({error:'This workspace is limited to two accounts'},409);
   const salt=hex(bytes(16));
   try{await env.DB.prepare('INSERT INTO users(id,email,display_name,password_hash,salt,role) VALUES(?,?,?,?,?,?)').bind(crypto.randomUUID(),email,name,await hashPassword(password,salt),'member').run()}catch{return json({error:'Email already registered'},409)}
@@ -85,7 +85,7 @@ async function handler(req:Request,env:Env):Promise<Response>{
  if(path==='/api/password'&&req.method==='POST'){
   const b=await payload(req);const old=clean(b?.currentPassword),next=clean(b?.newPassword);
   if(next.length<12)return json({error:'New password must contain at least 12 characters'},400);
-  const stored=await env.DB.prepare('SELECT salt,password_hash FROM users WHERE id=?').bind(user.id).first<{salt:string;password_hash:string}>();
+  const stored=await env.DB.prepare('SELECT salt,password_hash FROM users WHERE id=?').bind(user.id).first();
   if(!stored||await hashPassword(old,stored.salt)!==stored.password_hash)return json({error:'Current password is incorrect'},403);
   const salt=hex(bytes(16));await env.DB.prepare('UPDATE users SET salt=?,password_hash=? WHERE id=?').bind(salt,await hashPassword(next,salt),user.id).run();
   await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(user.id).run();
