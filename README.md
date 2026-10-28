@@ -87,3 +87,7 @@ This portable implementation requires Workers Paid CPU capacity. Free's 10 ms CP
 Validation: npm test uses synthetic records and compares with Node PBKDF2 at the original parameters, disables native deriveBits to emulate the production restriction, and checks correct/incorrect login with session-only writes. Never log passwords, credential hashes, or raw D1 user records.
 
 References: https://github.com/cloudflare/workerd/issues/1346 and https://developers.cloudflare.com/workers/platform/limits/ .
+
+## Shopify, social accounts and Etsy
+
+Settings includes secure account authorization and read-only previews for Shopify, Instagram/Facebook, TikTok and Etsy. Provider apps, server secrets and additive migration 0002 are required before connection buttons become available. See [integration setup and rollout](docs/integrations.md). Workspace records are not overwritten by external data.

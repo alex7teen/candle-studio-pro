@@ -1,5 +1,6 @@
 import { hashPassword, equalPasswordHash } from './password';
-export interface Env { DB: any; ASSETS: {fetch(request:Request):Promise<Response>}; }
+import { handleIntegrations, type IntegrationEnv } from './integrations';
+export interface Env extends IntegrationEnv { DB: any; ASSETS: {fetch(request:Request):Promise<Response>}; }
 const json=(body:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers}});
 const bytes=(n=32)=>crypto.getRandomValues(new Uint8Array(n));
 const hex=(b:Uint8Array)=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');
@@ -14,6 +15,7 @@ function checkWorkspace(d:any){return d&&typeof d==='object'&&!Array.isArray(d)&
 async function handler(req:Request,env:Env):Promise<Response>{
  const path=new URL(req.url).pathname;
  if(!path.startsWith('/api/'))return env.ASSETS.fetch(req);
+ if(path==='/api/integrations'||path.startsWith('/api/integrations/'))return (await handleIntegrations(req,env,()=>session(req,env)))!;
  if(!allowedOrigin(req))return json({error:'Invalid origin'},403);
  if(!['GET','POST','PUT'].includes(req.method))return json({error:'Method not allowed'},405);
  if(path==='/api/health'){

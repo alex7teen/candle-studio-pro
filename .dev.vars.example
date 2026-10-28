@@ -1,0 +1,13 @@
+# Local testing only. Copy to .dev.vars (ignored by Git).
+# Use a dedicated staging OAuth app and staging D1 database.
+# Production origin is configured in wrangler.jsonc.
+INTEGRATION_ORIGIN=https://your-https-development-host.example
+INTEGRATION_ENCRYPTION_KEY=
+SHOPIFY_CLIENT_ID=
+SHOPIFY_CLIENT_SECRET=
+META_APP_ID=
+META_APP_SECRET=
+TIKTOK_CLIENT_KEY=
+TIKTOK_CLIENT_SECRET=
+ETSY_CLIENT_ID=
+ETSY_SHARED_SECRET=

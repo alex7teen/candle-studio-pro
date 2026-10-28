@@ -3,6 +3,10 @@
   "name": "candle-studio-pro",
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-28",
+  "vars": {
+    "INTEGRATION_ORIGIN": "https://candle-studio-pro.algonlinesrl.workers.dev",
+    "META_GRAPH_VERSION": "v24.0"
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
