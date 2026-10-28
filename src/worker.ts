@@ -16,7 +16,15 @@ async function handler(req:Request,env:Env):Promise<Response>{
  if(!path.startsWith('/api/'))return env.ASSETS.fetch(req);
  if(!allowedOrigin(req))return json({error:'Invalid origin'},403);
  if(!['GET','POST','PUT'].includes(req.method))return json({error:'Method not allowed'},405);
- if(path==='/api/health')return json({ok:true});
+ if(path==='/api/health'){
+  if(!env.DB)return json({ok:false,database:'binding_missing'},503);
+  try{
+   const rows=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','sessions','workspace')").all();
+   const found=(rows.results||[]).map((r:{name:string})=>r.name);
+   const missing=['users','sessions','workspace'].filter(name=>!found.includes(name));
+   return json({ok:missing.length===0,database:'connected',schema:missing.length?'missing_tables':'ready',missingTables:missing},missing.length?503:200);
+  }catch(e){console.error('Database health check failed',e);return json({ok:false,database:'query_failed'},503)}
+ }
  if(path==='/api/setup')return json({error:'Public registration is disabled'},403);
  if(path==='/api/login'&&req.method==='POST'){
   const b=await payload(req);const username=clean(b?.username).toLowerCase(),email=username==='alex'?'alex@accounts.cozyalco.invalid':username==='corina'?'corina@accounts.cozyalco.invalid':'',password=clean(b?.password);
