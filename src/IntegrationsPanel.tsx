@@ -14,6 +14,12 @@ const channels: { id: string; auth: Provider; name: string; mark: string; descri
   { id: 'etsy', auth: 'etsy', name: 'Etsy', mark: 'E', description: 'Connect your seller account and view active listings and available quantities.' },
 ];
 const messages: Record<string, string> = {
+  connection_failed_consume_state: 'The authorization could not be finalized in the database. Reference: consume_state.',
+  connection_failed_decrypt_state: 'The authorization could not be decrypted. Please reconnect. Reference: decrypt_state.',
+  connection_failed_verify_shopify: 'The Shopify authorization could not be verified. Reference: verify_shopify.',
+  connection_failed_exchange_token: 'Shopify could not complete the authorization exchange. Reference: exchange_token.',
+  connection_failed_read_shop: 'Shopify authorized access, but store details could not be loaded. Reference: read_shop.',
+  connection_failed_save_connection: 'The authorized connection could not be saved. Reference: save_connection.',
   connected: 'Your account is connected. You can now load its latest data.',
   setup_required: 'Account setup is needed before this service can be connected.',
   shop_domain_required: 'Enter the original store address ending in .myshopify.com. Find it in Shopify → Settings → Domains.',

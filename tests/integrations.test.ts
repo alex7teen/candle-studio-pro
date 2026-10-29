@@ -123,6 +123,17 @@ describe('integration security', () => {
 });
 
 describe('provider connections with synthetic responses', () => {
+  it('reports only a fixed callback stage when the runtime throws', async () => {
+    const flow = await begin('etsy');
+    const prepare = env.DB.prepare;
+    env.DB.prepare = (sql: string) => {
+      if (sql.startsWith('DELETE FROM integration_oauth_states')) throw new Error('Synthetic confidential details must not escape');
+      return prepare(sql);
+    };
+    const result = await handle(returnRequest('etsy', flow.state, flow.cookie));
+    expect(result.headers.get('location')).toContain('connection_failed_consume_state');
+    expect(result.headers.get('location')).not.toContain('confidential');
+  });
   it('connects Shopify, reads products and prevents callback replay without changing workspace', async () => {
     const flow = await begin('shopify', 'synthetic.myshopify.com');
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(reply({ access_token: token, scope: 'read_products' }))

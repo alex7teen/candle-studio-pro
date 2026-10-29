@@ -159,13 +159,15 @@ async function start(req: Request, env: IntegrationEnv, user: Admin, provider: P
   response.headers.set('set-cookie', browserCookie(provider, browser));
   return response;
 }
-async function complete(req: Request, env: IntegrationEnv, provider: Provider) {
+async function complete(req: Request, env: IntegrationEnv, provider: Provider, progress: (stage: string) => void = () => {}) {
+  progress('validate_request');
   if (!configured(env, provider)) return fail('setup_required', 503);
   const url = new URL(req.url), params = url.searchParams;
   if (params.getAll('state').length !== 1 || params.getAll('code').length > 1) return fail('invalid_authorization', 400);
   const raw = params.get('state') || '', browser = readCookie(req, `cs_oauth_${provider}`);
   if (!/^[a-f0-9]{64}$/.test(raw) || !browser) return fail('invalid_authorization', 400);
   const stateHash = await digest(raw);
+  progress('consume_state');
   // Atomic consumption prevents replay. The initiating session must still exist,
   // even when its Strict cookie is omitted on the provider's cross-site return.
   const state = await env.DB.prepare(`DELETE FROM integration_oauth_states WHERE state_hash=? AND provider=? AND browser_hash=? AND expires_at>?
@@ -176,16 +178,21 @@ async function complete(req: Request, env: IntegrationEnv, provider: Provider) {
   if (params.has('error')) return fail('authorization_cancelled');
   const code = params.get('code');
   if (!code || code.length > 4096) return fail('invalid_authorization');
+  progress('decrypt_state');
   const saved = await unseal<{ shop: string; verifier: string }>(env, `state:${stateHash}`, state.payload_ciphertext);
   const redirect = callback(env, provider);
   if (provider === 'shopify') {
+    progress('verify_shopify');
     const shop = shopDomain(params.get('shop'));
     if (shop !== saved.shop || !await shopifyHmac(params, env.SHOPIFY_CLIENT_SECRET!)) return fail('invalid_authorization');
     const timestamp = Number(params.get('timestamp')) * 1000;
     if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 600000) return fail('invalid_authorization');
+    progress('exchange_token');
     const token = tokenData(await remote(`https://${shop}/admin/oauth/access_token`, form({ client_id: env.SHOPIFY_CLIENT_ID!, client_secret: env.SHOPIFY_CLIENT_SECRET!, code })));
     if (!token.scope?.split(',').includes('read_products')) return fail('permissions_required', 403);
+    progress('read_shop');
     const info = await shopify(env, shop, token, '{shop{name myshopifyDomain primaryDomain{url}}}');
+    progress('save_connection');
     await storeAccount(env, state.user_id, 'shopify', shop, info.shop.name, token, { domain: info.shop.primaryDomain?.url });
   } else if (provider === 'meta') {
     const base = `https://graph.facebook.com/${metaVersion(env)}`;
@@ -280,8 +287,9 @@ export async function handleIntegrations(req: Request, env: IntegrationEnv, getU
   try {
     if (parts[2] === 'callback' && ids.includes(provider) && req.method === 'GET') {
       if (url.origin !== origin(env)) return fail('invalid_origin', 403);
-      try { return await complete(req, env, provider); }
-      catch (error) { return redirectResult(env, provider, error instanceof IntegrationError ? error.code : 'connection_failed'); }
+      let stage = 'validate_request';
+      try { return await complete(req, env, provider, value => { stage = value; }); }
+      catch (error) { return redirectResult(env, provider, error instanceof IntegrationError ? error.code : `connection_failed_${stage}`); }
     }
     const user = await getUser();
     if (!user) return json({ error: 'Not signed in', code: 'not_signed_in' }, 401);
