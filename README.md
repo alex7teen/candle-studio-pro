@@ -90,4 +90,6 @@ References: https://github.com/cloudflare/workerd/issues/1346 and https://develo
 
 ## Shopify, social accounts and Etsy
 
+Manufacturing tools, setup and safe migration: [manufacturing workspace guide](docs/manufacturing.md).
+
 Settings includes secure account authorization and read-only previews for Shopify, Instagram/Facebook, TikTok and Etsy. Provider apps, server secrets and additive migration 0002 are required before connection buttons become available. See [integration setup and rollout](docs/integrations.md). Workspace records are not overwritten by external data.

@@ -1,6 +1,6 @@
 export type Unit='g'|'ml'|'pcs';
 export type Line={id:string;name:string;packages:number;perPackage:number|null;unit:Unit;lineTotal:number;status:'ready'|'review';category:string};
-export type Purchase={id:string;number:string;date:string;supplier:string;subtotal:number;discount:number;shipping:number;vat:number;total:number;lines:Line[];sourceKey:string;imported:boolean};
+export type Purchase={id:string;number:string;date:string;supplier:string;subtotal:number;discount:number;shipping:number;vat:number;total:number;lines:Line[];sourceKey:string;imported:boolean;pricesIncludeVat?:boolean};
 export type Movement={id:string;itemId:string;date:string;type:'received'|'consumed'|'wasted'|'adjustment';quantity:number;note:string;ref:string};
 export type Item={id:string;name:string;unit:Unit;category:string;opening:number;low:number};
 export type RecipePart={itemId:string;quantity:number};

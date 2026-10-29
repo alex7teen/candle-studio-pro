@@ -1,5 +1,6 @@
 import { hashPassword, equalPasswordHash } from './password';
 import { handleIntegrations, type IntegrationEnv } from './integrations';
+import { handleManufacturing, protectManufacturingMovements } from './manufacturing-api';
 export interface Env extends IntegrationEnv { DB: any; ASSETS: {fetch(request:Request):Promise<Response>}; }
 const json=(body:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers}});
 const bytes=(n=32)=>crypto.getRandomValues(new Uint8Array(n));
@@ -51,6 +52,7 @@ async function handler(req:Request,env:Env):Promise<Response>{
  }
  const user=await session(req,env);
  if(!user)return json({error:'Not signed in'},401);
+ if(path.startsWith('/api/manufacturing/'))return handleManufacturing(req,env,user);
  if(path==='/api/me'&&req.method==='GET')return json({user:{id:user.id,email:user.email,name:user.display_name,role:user.role}});
  if(path==='/api/logout'&&req.method==='POST'){
   const token=req.headers.get('cookie')?.match(/(?:^|;\s*)cs_session=([^;]+)/)?.[1];
@@ -65,7 +67,8 @@ async function handler(req:Request,env:Env):Promise<Response>{
   const b=await payload(req);
   if(!b||!checkWorkspace(b.data)||!Number.isInteger(b.revision))return json({error:'Invalid workspace data or revision'},400);
   const serialized=JSON.stringify(b.data);if(serialized.length>2_000_000)return json({error:'Workspace exceeds 2 MB'},413);
-  const current=await env.DB.prepare('SELECT revision FROM workspace WHERE id=1').first();
+  const current=await env.DB.prepare('SELECT revision,data FROM workspace WHERE id=1').first();
+  {const integrityError=protectManufacturingMovements(current?JSON.parse(current.data):{...(b.data as any),movements:[]},b.data as any);if(integrityError)return json({error:integrityError},400)}
   if(!current){
    if(b.revision!==0)return json({error:'Outdated workspace; reload'},409);
    const inserted=await env.DB.prepare('INSERT OR IGNORE INTO workspace(id,data,revision,updated_by) VALUES(1,?,1,?)').bind(serialized,user.id).run();
