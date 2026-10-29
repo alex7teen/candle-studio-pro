@@ -15,7 +15,7 @@ export function fixture():{state:ManufacturingState;recipe:Recipe}{
 }
 export function databaseFixture(){
  const {state,recipe}=fixture(),database=new DatabaseSync(':memory:');database.exec('PRAGMA foreign_keys=ON');
- for(const file of ['0001_init.sql','0002_integrations.sql','0003_manufacturing.sql'])database.exec(readFileSync(`migrations/${file}`,'utf8'));
+ for(const file of ['0001_init.sql','0002_integrations.sql','0003_manufacturing.sql','0004_costing.sql'])database.exec(readFileSync(`migrations/${file}`,'utf8'));
  database.prepare('INSERT INTO users(id,email,display_name,password_hash,salt,role) VALUES(?,?,?,?,?,?)').run(testUser.id,'test@example.invalid','Test','synthetic-placeholder','synthetic','admin');
  database.prepare('INSERT INTO workspace(id,data,revision) VALUES(1,?,1)').run(JSON.stringify(state.workspace));
  for(const m of state.materials)database.prepare('INSERT INTO mf_materials(id,name,unit,kind,specification) VALUES(?,?,?,?,?)').run(m.id,m.name,m.unit,m.kind,JSON.stringify(m.specification));

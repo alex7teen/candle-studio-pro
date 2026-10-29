@@ -1,9 +1,13 @@
+import {landedCost,type CostMode,type PurchaseCosting} from './landed-cost';
 import type { DB } from './logic';
 
 export type CandleType = 'Container' | 'Pillar' | 'Silicone Mould' | 'Wax Melt' | 'Layered/Decorative Candle';
 export const candleTypes: CandleType[] = ['Container','Pillar','Silicone Mould','Wax Melt','Layered/Decorative Candle'];
 export type MaterialKind = 'wax'|'fragrance'|'dye'|'wick'|'container'|'packaging'|'equipment'|'other';
 export interface Specification {
+ fieldSources?:Record<string,{source:string;retrievedAt:string;verified:boolean}>;
+ image?:string; retrievedAt?:string; verificationStatus?:string; nominalMl?:number; insideDiameterMm?:number; outerDiameterMm?:number; outerHeightMm?:number; innerHeightMm?:number; approxWaxCapacityG?:number;
+ compatibilityText?:string; fragranceGuidance?:string; dyeGuidance?:string; meltGuidance?:string; mixGuidance?:string; pourGuidance?:string; packDescription?:string; safetyGuidance?:string; technicalDocument?:string;
   verified?: boolean; source?: string; verifiedAt?: string; supplier?: string; productRef?: string; lot?: string;
   candleTypes?: CandleType[]; compatibleWaxIds?: string[]; minFragrancePct?: number; maxFragrancePct?: number;
   fragranceBasis?: 'wax'|'mixture'; maxDyePct?: number; densityGml?: number; meltC?: number; mixC?: number; pourC?: number;
@@ -19,13 +23,14 @@ export interface Calibration { id:string; cavityId:string; waxId?:string; formul
 export interface Decoration { id:string; cavityId:string; calibrationId?:string; name:string; category?:string; image?:string; notes?:string; formulation:Formulation; revision:number; archived?:boolean }
 export interface Layer extends Formulation { id:string; name:string; mode:'wax'|'mixture'|'volume'; weightG:number; fillPct:number; mixtureDensityGml?:number; densitySource?:string; densityDate?:string; visualColour:string }
 export interface DecorationPart { id:string; decorationId:string; quantity:number; source:'stock'|'new'|'mixed' }
-export interface PackagingPart { id:string; itemId:string; quantity:number }
+export interface PackagingPart { id:string; itemId:string; quantity:number; role?:'safety-label'|'adhesive'|'packaging' }
 export interface Pricing {
  labour:number; overhead:number; other:number; feePct:number; fixedFee:number; markupPct:number; marginPct:number;
- strategy:'margin'|'markup'; vatRegistered:boolean; outputVatPct:number; recoverInputVat:boolean; sellingPrice?:number;
+ costMode?:CostMode; strategy:'margin'|'markup'; vatRegistered:boolean; outputVatPct:number; recoverInputVat:boolean; sellingPrice?:number;
 }
-export const defaultPricing: Pricing={labour:0,overhead:0,other:0,feePct:0,fixedFee:0,markupPct:50,marginPct:40,strategy:'margin',vatRegistered:false,outputVatPct:0,recoverInputVat:false};
+export const defaultPricing: Pricing={costMode:'replacement',labour:0,overhead:0,other:0,feePct:0,fixedFee:0,markupPct:50,marginPct:40,strategy:'margin',vatRegistered:false,outputVatPct:0,recoverInputVat:false};
 export interface Recipe {
+ wizardProgress?:{step:number;quantity:number};
  id:string; version:number; name:string; type:CandleType; containerId?:string; mouldId?:string; cavityId?:string; wickId?:string;
  layers:Layer[]; decorations:DecorationPart[]; packaging:PackagingPart[]; lossPct:number; pricing:Pricing;
  notes:string; draft:boolean; archived?:boolean; placement:{verified:boolean; headspace:boolean; wickClearance:boolean; fit:boolean; notes:string};
@@ -34,7 +39,7 @@ export interface Recipe {
 export interface Quality { id:string; sequence?:number; recipeId:string; recipeVersion:number; productionId?:string; kind:'burn'|'compliance'|'inspection'; outcome:'pass'|'fail'|'pending'; date:string; notes:string; evidence?:string; batchNumber?:string; classification?:string; checks?:Record<string,boolean> }
 export interface DecorationMovement { id:string; decorationId:string; decorationRevision?:number; productionId:string; quantity:number; unitCost:number; notes:string }
 export interface Production { id:string; batchNumber:string; kind:string; quantity:number; recipeId?:string; recipeVersion?:number; decorationId?:string; snapshot:any; date:string; reverses?:string }
-export interface ManufacturingState { workspace:DB; workspaceRevision:number; materials:Material[]; containers:Container[]; moulds:Mould[]; cavities:Cavity[]; calibrations:Calibration[]; decorations:Decoration[]; recipes:Recipe[]; quality:Quality[]; decorationMovements:DecorationMovement[]; production:Production[]; plans?:any[] }
+export interface ManufacturingState { workspace:DB; workspaceRevision:number; materials:Material[]; containers:Container[]; moulds:Mould[]; cavities:Cavity[]; calibrations:Calibration[]; decorations:Decoration[]; recipes:Recipe[]; quality:Quality[]; decorationMovements:DecorationMovement[]; production:Production[]; plans?:any[]; purchaseCosting?:PurchaseCosting[] }
 export interface Issue { level:'red'|'amber'; code:string; message:string; component?:string; suggestions?:{pct:number; fragranceG:number; savingG:number}[] }
 export interface Requirement { itemId:string; name:string; unit:string; quantity:number; available:number; shortfall:number; remaining:number; unitCost:number|null; cost:number|null; category:string }
 export interface LayerResult { id:string; name:string; waxG:number; fragranceG:number; dyeG:number; mixtureG:number; volumeMl:number|null }
@@ -68,21 +73,7 @@ export function decorationCost(state:ManufacturingState,id:string,revision?:numb
  const receipts=state.decorationMovements.filter(m=>m.decorationId===id&&m.quantity>0&&!m.notes.startsWith('Reversal')&&(revision===undefined||(m.decorationRevision||1)===revision));
  const qty=receipts.reduce((n,m)=>n+m.quantity,0);return qty?round(receipts.reduce((n,m)=>n+m.quantity*m.unitCost,0)/qty):null;
 }
-export function receiptCost(db:DB,id:string,recoverVat=false):number|null {
- const item=db.items.find(i=>i.id===id);if(!item||item.opening>0)return null;
- let qty=0n,value=0n;
- for(const purchase of db.purchases){
-  const p=purchase as typeof purchase&{pricesIncludeVat?:boolean};
-  const gross=fixed(p.subtotal)-fixed(p.discount)+fixed(p.shipping)+(p.pricesIncludeVat?0n:fixed(p.vat));
-  const valued=gross-(recoverVat?fixed(p.vat):0n);
-  if(p.subtotal<=0)continue;
-  for(const line of p.lines){
-   if(line.status!=='ready'||line.unit!==item.unit||!line.perPackage||!(line.id===id||line.name.toLowerCase()===item.name.toLowerCase()))continue;
-   qty+=multiply(fixed(line.packages),fixed(line.perPackage));value+=multiply(fixed(line.lineTotal),divide(valued,fixed(p.subtotal)));
-  }
- }
- return qty>0n?decimal(divide(value,qty)):null;
-}
+export function receiptCost(db:DB,id:string,recoverVat=false,mode:CostMode='historical',settings:PurchaseCosting[]=[]):number|null {return landedCost(db,id,mode,recoverVat,settings).unit}
 export function calibratedWeight(state:ManufacturingState,decoration:Decoration):number|null {
  const c=state.calibrations.find(c=>c.id===decoration.calibrationId&&c.cavityId===decoration.cavityId);
  if(!c||c.method!=='actual-wax'||formulationKey(c.formulation)!==formulationKey(decoration.formulation)||!c.weightG)return null;
@@ -102,6 +93,10 @@ export function projectedWaterCalibration(c:Calibration,density?:number):{ml:num
  const ml=c.method==='water-volume'?c.volumeMl??null:c.method==='water-mass'&&c.waterDensityGml&&c.waterMassG?round(c.waterMassG/c.waterDensityGml):null;
  return {ml,grams:ml!==null&&density?round(ml*density):null};
 }
+function estimateDecorationReplacement(state:ManufacturingState,d:Decoration,recipe:Recipe):number|null {
+ const weight=calibratedWeight(state,d);if(weight===null)return null;const m=mix(weight,d.formulation.fragrancePct,d.formulation.dyePct,'mixture');let total=0;
+ for(const [id,g] of [[d.formulation.waxId,m.waxG],[d.formulation.fragranceId,m.fragranceG],[d.formulation.dyeId,m.dyeG]] as [string|undefined,number][]){if(g<=0)continue;const material=state.materials.find(m=>m.id===id),c=receiptCost(state.workspace,id||'',recipe.pricing.vatRegistered&&recipe.pricing.recoverInputVat,'replacement',state.purchaseCosting);if(c===null||!material)return null;if(material.unit==='ml'&&(!material.specification.verified||!material.specification.densityGml))return null;total+=g*c/(material.unit==='ml'?material.specification.densityGml!:1)}return round(total*(1+recipe.lossPct/100));
+}
 export function initialRecipe():Recipe{return {id:crypto.randomUUID(),version:0,name:'New candle recipe',type:'Container',layers:[{id:crypto.randomUUID(),name:'Base layer',waxId:'',fragrancePct:0,dyePct:0,mode:'wax',weightG:200,fillPct:30,visualColour:'#ead8b5'}],decorations:[],packaging:[],lossPct:0,pricing:{...defaultPricing},notes:'',draft:true,placement:{verified:false,headspace:false,wickClearance:false,fit:false,notes:''}}}
 
 export function calculate(state:ManufacturingState,recipe:Recipe,count=1,options:{skipMaximum?:boolean;purpose?:'test'|'sale';componentProduction?:boolean}={}):Plan {
@@ -110,7 +105,7 @@ export function calculate(state:ManufacturingState,recipe:Recipe,count=1,options
  const material=(id:string|undefined)=>state.materials.find(m=>m.id===id);
  const specified=(m:Material|undefined)=>Boolean(m?.specification.verified&&m.specification.source&&m.specification.verifiedAt);
  const loss=SCALE+divide(fixed(recipe.lossPct),fixed(100));
- function add(id:string|undefined,quantityG:number,unit:'g'|'pcs',component:string){
+ function add(id:string|undefined,quantityG:number,unit:'g'|'ml'|'pcs',component:string){
   if(quantityG<=0)return;
   if(!id){if(quantityG>0)addIssue('red','missing_ingredient',`Select the required material for ${component}.`,component);return}
   const m=material(id),item=state.workspace.items.find(i=>i.id===id);
@@ -156,7 +151,7 @@ export function calculate(state:ManufacturingState,recipe:Recipe,count=1,options
   if(f.dyePct>0&&(!specified(dye)||dye?.specification.maxDyePct===undefined))addIssue('amber','dye_limit_unknown','Dye usage limit: Specification Not Verified.',component);
   if(dye&&dye.kind!=='dye')addIssue('red','wrong_dye','Selected ingredient is not a dye.',component);
   if(f.fragrancePct>0&&![wax,fragrance].some(m=>specified(m)&&m?.specification.maxFragrancePct!==undefined))addIssue('amber','fragrance_limit_unknown','Applicable fragrance limit: Specification Not Verified.',component);
-  for(const key of ['meltC','mixC','pourC','cure'] as const)if(!specified(wax)||!wax?.specification[key])addIssue('amber','guidance_unknown',`${component}: verified melting, mixing, pouring or curing guidance is incomplete.`,component);
+  for(const [key,guidance] of [['meltC','meltGuidance'],['mixC','mixGuidance'],['pourC','pourGuidance'],['cure','cure']] as const)if(!specified(wax)||!wax?.specification[key]&&!wax?.specification[guidance])addIssue('amber','guidance_unknown',`${component}: verified melting, mixing, pouring or curing guidance is incomplete.`,component);
  }
  const container=recipe.containerSnapshot||state.containers.find(c=>c.id===recipe.containerId);
  const needsContainer=['Container','Layered/Decorative Candle'].includes(recipe.type);
@@ -172,6 +167,7 @@ export function calculate(state:ManufacturingState,recipe:Recipe,count=1,options
  }
  let totalFill=0,layerMass=0,usedVolume=0,volumeKnown=true;
  for(const layer of recipe.layers){
+  if(!Number.isFinite(layer.weightG)||!Number.isFinite(layer.fillPct)||(layer.mode==='volume'?layer.fillPct<=0:layer.weightG<=0))addIssue('red','invalid_weight','Each layer needs a positive weight or calibrated volume fill.',layer.id);
   let weight=layer.weightG,volume:number|null=null;
   if(layer.mode==='volume'){
    totalFill+=layer.fillPct;
@@ -227,11 +223,11 @@ export function calculate(state:ManufacturingState,recipe:Recipe,count=1,options
    validateFormulation(d.formulation,mixture,d.name,'Silicone Mould');
    for(const [id,g] of [[d.formulation.waxId,mixture.waxG],[d.formulation.fragranceId,mixture.fragranceG],[d.formulation.dyeId,mixture.dyeG]] as [string|undefined,number][]){
     if(g<=0)continue;add(id,decimal(multiply(fixed(g*manufacture),loss)),'g',d.name);
-    const m=material(id),unit=receiptCost(state.workspace,id||'',recipe.pricing.recoverInputVat&&recipe.pricing.vatRegistered);
+    const m=material(id),unit=receiptCost(state.workspace,id||'',recipe.pricing.recoverInputVat&&recipe.pricing.vatRegistered,recipe.pricing.costMode||'replacement',state.purchaseCosting);
     if(unit===null)newCost=null;else if(newCost!==null)newCost+=g*unit/(m?.unit==='ml'?(m.specification.densityGml||1):1);
    }
   }
-  const stockCost=decorationCost(state,d.id,d.revision);if(premade&&stockCost===null)addIssue('amber','decoration_cost_unknown',`${d.name}: pre-made unit cost is not available.`,part.id);
+  const stockCost=recipe.pricing.costMode==='historical'?decorationCost(state,d.id,d.revision):newCost===null?null:round(newCost*(1+recipe.lossPct/100));if(premade&&stockCost===null)addIssue('amber','decoration_cost_unknown',`${d.name}: pre-made unit cost is not available.`,part.id);
   const figure:FigureResult={decorationId:d.id,name:d.name,required:needed,premade,manufacture,weightG:weight,cost:newCost===null||premade&&stockCost===null?null:round((newCost||0)*manufacture+(stockCost||0)*premade),mouldId:mould?.id||'',cavityId:cavity?.id||'',rounds:0,finalCavities:0,avoidedOverproductionG:0};
   figureResults.push(figure);if(manufacture&&cavity){const value=cavityDemand.get(cavity.id)||{count:0,figures:[]};value.count+=manufacture;value.figures.push(figure);cavityDemand.set(cavity.id,value)}
  }
@@ -248,14 +244,14 @@ export function calculate(state:ManufacturingState,recipe:Recipe,count=1,options
  }
  if(volumeKnown&&container?.usableMl&&usedVolume+(decorationVolumeKnown?decorationVolume:0)>container.usableMl+0.000001)addIssue('red','volume_overflow','Calculated layers and measured figure displacement exceed the container’s calibrated usable fill.');
  if(needsContainer&&!volumeKnown&&(!recipe.placement.verified||!recipe.placement.headspace||!recipe.placement.fit))addIssue('amber','fill_fit_unverified','Mass alone cannot establish container fill or headspace. Record formulation density or measured physical fill observations.');
- for(const p of recipe.packaging)add(p.itemId,round(p.quantity*count),'pcs','Packaging');
+ for(const p of recipe.packaging)add(p.itemId,round(p.quantity*count),material(p.itemId)?.unit||'pcs','Packaging');
  const requirements:Requirement[]=[];let materialCost:number|null=0;
- for(const [id,q] of required){const item=state.workspace.items.find(i=>i.id===id)!,quantity=decimal(q),available=stock(state.workspace,id),shortfall=round(Math.max(0,quantity-available)),unit=receiptCost(state.workspace,id,recipe.pricing.vatRegistered&&recipe.pricing.recoverInputVat),cost=unit===null?null:round(unit*quantity);
+ for(const [id,q] of required){const item=state.workspace.items.find(i=>i.id===id)!,quantity=decimal(q),available=stock(state.workspace,id),shortfall=round(Math.max(0,quantity-available)),unit=receiptCost(state.workspace,id,recipe.pricing.vatRegistered&&recipe.pricing.recoverInputVat,recipe.pricing.costMode||'replacement',state.purchaseCosting),cost=unit===null?null:round(unit*quantity);
   if(shortfall>0)addIssue('red','stock_shortfall',`${item.name}: need another ${shortfall} ${item.unit}.`,id);
   if(cost===null){materialCost=null;addIssue('amber','cost_unknown',`${item.name}: no usable purchase cost is recorded.`,id)}else if(materialCost!==null)materialCost+=cost;
   requirements.push({itemId:id,name:item.name,unit:item.unit,quantity,available,shortfall,remaining:round(available-quantity),unitCost:unit,cost,category:material(id)?.kind||'other'});
  }
- for(const f of figureResults){if(f.premade){const d=(recipe.decorationSnapshots||state.decorations).find(d=>d.id===f.decorationId);const unit=decorationCost(state,f.decorationId,d?.revision);if(unit===null)materialCost=null;else if(materialCost!==null)materialCost+=unit*f.premade}}
+ for(const f of figureResults){if(f.premade){const d=(recipe.decorationSnapshots||state.decorations).find(d=>d.id===f.decorationId);const unit=recipe.pricing.costMode==='historical'?decorationCost(state,f.decorationId,d?.revision):d?estimateDecorationReplacement(state,d,recipe):null;if(unit===null)materialCost=null;else if(materialCost!==null)materialCost+=unit*f.premade}}
  const latestQuality=(kind:string)=>[...state.quality].reverse().filter(q=>q.recipeId===recipe.id&&q.recipeVersion===recipe.version&&q.kind===kind).sort((a,b)=>b.date.localeCompare(a.date)||(b.sequence||0)-(a.sequence||0))[0];
  const burn=latestQuality('burn'),compliance=latestQuality('compliance');
  if(burn?.outcome!=='pass')addIssue('amber','burn_test_required','No successful burn test is recorded for this recipe version.');
@@ -271,5 +267,5 @@ export function calculate(state:ManufacturingState,recipe:Recipe,count=1,options
  let maxCandles=count;
  if(!options.skipMaximum){let low=0,high=required.size?100000:0;while(low<high){const mid=Math.ceil((low+high+1)/2),plan=calculate(state,recipe,mid,{...options,skipMaximum:true});if(plan.issues.some(i=>i.code==='stock_shortfall'||i.code==='decoration_shortfall'))high=mid-1;else low=mid}maxCandles=low}
  const status=issues.some(i=>i.level==='red')?'red':issues.length?'amber':'green';
- return {count,layers:layerResults,requirements,figures:figureResults,issues,status,massG:round((layerMass+decorationMass)*count),mixtureG:round(layerMass*count),volumeMl:volumeKnown?round(usedVolume*count):null,finishedProductG:container?.emptyWeightG!==undefined?round((layerMass+decorationMass+container.emptyWeightG)*count):null,maxCandles,costs:{materials:materialCost===null?null:round(materialCost),labour,overhead,other,total,unit,suggested,breakEven,expectedProfit:profit,marginPct:profit!==null&&sale?round(100*profit/sale,2):null,valuation:'Weighted average of recorded purchase receipts; missing costs remain unknown.'},canConfirm:status!=='red',burnApproved:burn?.outcome==='pass',complianceReviewed:compliance?.outcome==='pass',mouldRounds:[...mouldRounds].map(([mouldId,rounds])=>({mouldId,name:state.moulds.find(m=>m.id===mouldId)?.name||'',rounds}))};
+ return {count,layers:layerResults,requirements,figures:figureResults,issues,status,massG:round((layerMass+decorationMass)*count),mixtureG:round(layerMass*count),volumeMl:volumeKnown?round(usedVolume*count):null,finishedProductG:container?.emptyWeightG!==undefined?round((layerMass+decorationMass+container.emptyWeightG)*count):null,maxCandles,costs:{materials:materialCost===null?null:round(materialCost),labour,overhead,other,total,unit,suggested,breakEven,expectedProfit:profit,marginPct:profit!==null&&sale?round(100*profit/sale,2):null,valuation:p.costMode==='historical'?'Actual historical receipts, with recorded discounts.':'Standard replacement cost: original line values, allocated shipping and non-recoverable VAT; discounts ignored.'},canConfirm:status!=='red',burnApproved:burn?.outcome==='pass',complianceReviewed:compliance?.outcome==='pass',mouldRounds:[...mouldRounds].map(([mouldId,rounds])=>({mouldId,name:state.moulds.find(m=>m.id===mouldId)?.name||'',rounds}))};
 }

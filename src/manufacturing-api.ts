@@ -1,4 +1,6 @@
 import { seed, type DB } from './logic';
+import {extractSpecifications} from './supplier-specs';
+import {wizardErrors} from './wizard-model';
 import { calculate, calibratedWeight, decorationStock, decorationCost, defaultPricing, formulationKey, initialRecipe, mix, receiptCost, round, stock,
  type ManufacturingState, type Material, type Recipe, type Formulation, type Specification, type Production, type Plan, type Decoration, candleTypes } from './manufacturing-model';
 
@@ -21,8 +23,11 @@ function form(value:unknown,allowEmpty=false):Formulation{
 }
 function validateSpecs(value:unknown):Specification{
  const s=object(value,'specification'),out:Specification={verified:s.verified===true};
- for(const key of ['source','supplier','productRef','lot','cure','wickNotes','notes'] as const)if(s[key])out[key]=text(s[key],key,key==='notes'?4000:1000);
+ if(s.fieldSources){out.fieldSources={};const entries=Object.entries(object(s.fieldSources,'field provenance'));if(entries.length>100)return reject('Too many specification sources');for(const [key,entry] of entries){if(!/^[a-zA-Z][a-zA-Z0-9]{0,60}$/.test(key))return reject('Invalid source field');const e=object(entry,'field source');out.fieldSources[key]={source:text(e.source,'field source',2048,true),retrievedAt:date(e.retrievedAt,'retrieval date'),verified:e.verified===true}}}
+ for(const key of ['source','supplier','productRef','lot','cure','wickNotes','notes','image','retrievedAt','verificationStatus','compatibilityText','fragranceGuidance','dyeGuidance','meltGuidance','mixGuidance','pourGuidance','packDescription','safetyGuidance','technicalDocument'] as const)if(s[key])(out as any)[key]=text(s[key],key,key==='notes'?4000:1000);
+ for(const key of ['nominalMl','insideDiameterMm','outerDiameterMm','outerHeightMm','innerHeightMm','approxWaxCapacityG'])if(s[key]!==undefined)(out as any)[key]=number(s[key],key,0.000001,1e6);
  for(const key of ['sds','clp','fragranceDocumentation'] as const)if(s[key])out[key]=url(s[key],key);
+ if(s.image)out.image=photo(s.image);if(s.technicalDocument)out.technicalDocument=url(s.technicalDocument,'technical document');
  if(s.verifiedAt)out.verifiedAt=date(s.verifiedAt);
  if(out.verified&&(!out.source||!out.verifiedAt))return reject('Verified specifications require a source or measurement reference and verification date.');
  for(const key of ['minFragrancePct','maxFragrancePct','maxDyePct','densityGml','wickMinDiameterMm','wickMaxDiameterMm'] as const)if(s[key]!==undefined)out[key]=number(s[key],key,key==='densityGml'?0.000001:0,10000);
@@ -44,15 +49,17 @@ export function validateRecipe(value:unknown):Recipe{
  p.markupPct=number(p.markupPct,'markup',0,10000);p.outputVatPct=number(p.outputVatPct,'output VAT',0,100);
  p.vatRegistered=p.vatRegistered===true;p.recoverInputVat=p.vatRegistered&&p.recoverInputVat===true;
  if(!['margin','markup'].includes(p.strategy))return reject('Unknown pricing strategy');
+ if(!['historical','replacement'].includes(p.costMode))return reject('Unknown costing mode');
  if(p.sellingPrice!==undefined)p.sellingPrice=number(p.sellingPrice,'selling price',0,1e6);
  const recipe:Recipe={id:identifier(r.id),version:number(r.version??0,'recipe version',0,1e6,true),name:text(r.name,'recipe name',200,true),type:r.type,
   containerId:r.containerId?identifier(r.containerId):undefined,mouldId:r.mouldId?identifier(r.mouldId):undefined,cavityId:r.cavityId?identifier(r.cavityId):undefined,wickId:r.wickId?identifier(r.wickId):undefined,
   layers:array(r.layers,'layers').map((l:any)=>({...form(l,r.draft===true),id:identifier(l.id),name:text(l.name,'layer name',100,true),mode:['wax','mixture','volume'].includes(l.mode)?l.mode:reject('Unknown weight mode'),weightG:number(l.weightG,'layer weight',0,1e6),fillPct:number(l.fillPct,'layer fill',0,100),mixtureDensityGml:optionalNumber(l.mixtureDensityGml,'formulation density',0.000001,100),densitySource:l.densitySource?text(l.densitySource,'density measurement reference',1000):undefined,densityDate:l.densityDate?date(l.densityDate):undefined,visualColour:/^#[a-f0-9]{6}$/i.test(l.visualColour)?l.visualColour:'#ead8b5'})),
   decorations:array(r.decorations,'decorations').map((d:any)=>({id:identifier(d.id),decorationId:identifier(d.decorationId),quantity:number(d.quantity,'decoration quantity',1,1e6,true),source:['stock','new','mixed'].includes(d.source)?d.source:reject('Invalid figure stock source')})),
-  packaging:array(r.packaging||[],'packaging').map((x:any)=>({id:identifier(x.id),itemId:identifier(x.itemId),quantity:number(x.quantity,'packaging quantity',0.000001,1e6)})),
+  packaging:array(r.packaging||[],'packaging').map((x:any)=>({id:identifier(x.id),itemId:identifier(x.itemId),quantity:number(x.quantity,'packaging quantity',0.000001,1e6),role:['safety-label','adhesive','packaging'].includes(x.role)?x.role:undefined})),
   lossPct:number(r.lossPct,'loss allowance',0,100),pricing:p,notes:text(r.notes||'','recipe notes',10000),draft:r.draft===true,
   placement:{verified:placement.verified===true,headspace:placement.headspace===true,wickClearance:placement.wickClearance===true,fit:placement.fit===true,notes:text(placement.notes||'','placement notes',4000)}};
  const ids=[...recipe.layers,...recipe.decorations,...recipe.packaging].map(x=>x.id);if(new Set(ids).size!==ids.length)return reject('Component identifiers must be unique.');
+ if(r.wizardProgress){const w=object(r.wizardProgress,'wizard progress');recipe.wizardProgress={step:number(w.step,'wizard step',0,9,true),quantity:number(w.quantity,'wizard quantity',1,100000,true)}}
  if(recipe.placement.verified&&!recipe.placement.notes)return reject('Measured placement verification requires notes.');
  return recipe;
 }
@@ -65,7 +72,8 @@ export async function loadManufacturing(env:Env):Promise<ManufacturingState>{
  const materials:Material[]=workspace.items.map(i=>{const row=rows.find(r=>r.id===i.id);return {id:i.id,name:i.name,unit:i.unit,kind:row?.kind||category(i.category),specification:row?JSON.parse(row.specification):{},revision:row?.revision||0}});
  const read=async(table:string)=>await env.DB.prepare(`SELECT ${table==='mf_quality'?'rowid AS sequence,':''}* FROM ${table}`).all().then((r:any)=>r.results||[]);
  const [containers,moulds,cavities,calibrations,decorations,recipes,quality,movements,production,plans]=await Promise.all(['mf_containers','mf_moulds','mf_cavities','mf_calibrations','mf_decorations','mf_recipes','mf_quality','mf_decoration_movements','mf_production','mf_plans'].map(read));
- return {workspace,workspaceRevision:work?.revision??0,materials,
+ const purchaseCosting=await read('mf_purchase_costing');
+ return {workspace,workspaceRevision:work?.revision??0,materials,purchaseCosting:purchaseCosting.map((r:any)=>({...JSON.parse(r.data),purchaseId:r.purchase_id,revision:r.revision})),
   containers:containers.map((r:any)=>({...JSON.parse(r.data),id:r.id,itemId:r.item_id,name:r.name,revision:r.revision})),
   moulds:moulds.map((r:any)=>({...JSON.parse(r.data),id:r.id,name:r.name,revision:r.revision})),
   cavities:cavities.map((r:any)=>({...JSON.parse(r.data),id:r.id,mouldId:r.mould_id,name:r.name,count:r.count,revision:r.revision})),
@@ -126,6 +134,7 @@ async function saveEntity(env:Env,state:ManufacturingState,user:User,kind:string
   await writeVersioned(env,'mf_decorations',id,revision,['cavity_id','calibration_id','name','data','archived'],[cavityId,calibrationId,name,JSON.stringify(data),b.archived?1:0],['cavity_id=?','calibration_id=?','name=?','data=?','archived=?'],[cavityId,calibrationId,name,JSON.stringify(data),b.archived?1:0]);
  }else if(kind==='recipes'){
   const recipe=validateRecipe({...b,id});ensureReferences(state,recipe);
+  if(b.wizard===true&&!recipe.draft){const errors=Array.from({length:9},(_,step)=>wizardErrors(state,recipe,step)).flat();if(errors.length)return reject(errors.join(' '))}
   const current=state.recipes.filter(r=>r.id===id).sort((a,b)=>b.version-a.version)[0];
   if((current?.version||0)!==recipe.version)return reject('Recipe changed; reopen the latest version.',409);
   recipe.version++;
@@ -174,7 +183,7 @@ async function commitProduction(env:Env,user:User,b:any){
  if(kind==='candles'&&(!recipe||recipe.archived||recipe.draft))return reject('Choose a saved, active non-draft recipe version.');
  if(kind==='decorations'&&!decoration)return reject('Decoration not found',404);
  const effective=recipe||figureRecipe(state,decoration!);
- const plan=calculate(state,effective,count,{purpose:b.purpose==='sale'?'sale':'test',componentProduction:kind==='decorations'} as any);
+ const plan=calculate(state,kind==='decorations'?{...effective,pricing:{...effective.pricing,costMode:'historical'}}:effective,count,{purpose:b.purpose==='sale'?'sale':'test',componentProduction:kind==='decorations'} as any);
  if(!plan.canConfirm)return reject(plan.issues.filter(i=>i.level==='red').map(i=>i.message).join(' '));
  if(plan.issues.length&&!b.acknowledgeWarnings)return reject('Review and acknowledge the recorded warnings before test production.');
  const batchNumber=text(b.batchNumber,'batch number',150,true),producedAt=date(b.date,'production date'),notes=text(b.notes||'','batch notes',4000);
@@ -267,17 +276,20 @@ export function extractProduct(html:string,source:string){
  const capacityMatch=capacityText.match(/^\s*(\d+(?:\.\d+)?)\s*ml\s*$/i),capacityMl=capacityMatch?Number(capacityMatch[1]):null;
  return {name,supplier:new URL(source).hostname,productUrl:source,purchasePrice:offer?.price!==undefined&&Number.isFinite(price)&&price>=0&&(!offer.priceCurrency||offer.priceCurrency==='GBP')?price:undefined,image:image?url(new URL(image,source).toString(),'Product image'):undefined,notes:description,dimensions:String(fact(/dimensions|size/i)||''),material:String(product?.material||fact(/^material$/i)||''),heatResistance:String(fact(/temperature|heat/i)||''),publishedCavities:cavities&&/^\d+$/.test(String(cavities))?Number(cavities):null,capacityMl,weightG:null,source,reviewRequired:true,notice:'Wax capacity is not specified by the supplier. Please enter a measured value or calibrate this mould.'};
 }
+async function readPublicPage(value:unknown,asJson=false){
+ const productUrl=validateImportUrl(value);
+ const response=await fetch(productUrl,{redirect:'manual',signal:AbortSignal.timeout(12000),headers:{'accept':asJson?'application/json':'text/html','user-agent':'CandleStudioPro-ProductMetadata/1.0'}});
+ if(!response.ok||!response.headers.get('content-type')?.includes(asJson?'application/json':'text/html'))return reject('Supplier import is unavailable or restricted. Enter the product manually.',422);
+ if(Number(response.headers.get('content-length'))>2097152)return reject('Supplier page is too large; enter the product manually.',413);
+ const reader=response.body?.getReader();if(!reader)return reject('No supplier content received.');let size=0;const parts:Uint8Array[]=[];
+ while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>2097152){await reader.cancel();return reject('Supplier page is too large; enter the product manually.',413)}parts.push(value)}
+ const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length}return new TextDecoder().decode(bytes);
+}
 async function importProduct(env:Env,user:User,value:unknown){
  const productUrl=validateImportUrl(value),window=Math.floor(Date.now()/3600000);
- const limited=await env.DB.prepare('INSERT INTO mf_import_limits(user_id,window,requests) VALUES(?,?,1) ON CONFLICT(user_id,window) DO UPDATE SET requests=requests+1 WHERE requests<10 RETURNING requests').bind(user.id,window).first();
+ const limited=await env.DB.prepare('INSERT INTO mf_supplier_limits(user_id,window,requests) VALUES(?,?,1) ON CONFLICT(user_id,window) DO UPDATE SET requests=requests+1 WHERE requests<60 RETURNING requests').bind(user.id,window).first();
  if(!limited)return reject('Product import limit reached. Try again later or enter the mould manually.',429);
- const response=await fetch(productUrl,{redirect:'manual',signal:AbortSignal.timeout(12000),headers:{'accept':'text/html','user-agent':'CandleStudioPro-ProductMetadata/1.0'}});
- if(!response.ok||!response.headers.get('content-type')?.includes('text/html'))return reject('Supplier import is unavailable or restricted. Enter the mould manually.',422);
- if(Number(response.headers.get('content-length'))>524288)return reject('Supplier page is too large; enter the mould manually.',413);
- const reader=response.body?.getReader();if(!reader)return reject('No supplier content received.');let size=0;const parts:Uint8Array[]=[];
- while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>524288){await reader.cancel();return reject('Supplier page is too large; enter the mould manually.',413)}parts.push(value)}
- const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length}
- const result=extractProduct(new TextDecoder().decode(bytes),productUrl.toString());if(!result.name)return reject('No reliable public product metadata found. Enter the mould manually.',422);return result;
+ const html=await readPublicPage(productUrl.toString()),result=extractProduct(html,productUrl.toString());if(!result.name)return reject('No reliable public product metadata found. Enter the product manually.',422);return {...result,facts:extractSpecifications(html,productUrl.toString()),retrievedAt:new Date().toISOString(),verificationStatus:'Retrieved — review required'};
 }
 async function imageUpload(req:Request,env:Env,user:User){
  const mime=req.headers.get('content-type')?.split(';')[0];if(!['image/png','image/jpeg','image/webp'].includes(mime||''))return reject('Upload a PNG, JPEG or WebP image. SVG files are not accepted.');
@@ -299,10 +311,39 @@ export async function handleManufacturing(req:Request,env:Env,user:User):Promise
   const raw=await req.text();if(raw.length>2_000_000)return reject('Request exceeds 2 MB.',413);
   let body:any;try{body=object(JSON.parse(raw),'request')}catch{return reject('Invalid JSON request.')}
   if(action==='import-mould')return json(await importProduct(env,user,body.url));
+  if(action==='import-specifications')return json(await importProduct(env,user,body.url));
   if(action==='produce')return json(await commitProduction(env,user,body));
   if(action==='actual')return json(await productionAdjustment(env,user,body));
   if(action==='reverse')return json(await productionAdjustment(env,user,body,true));
   const state=await loadManufacturing(env);
+  if(action==='discover-specifications'){
+   const m=state.materials.find(m=>m.id===body.materialId);if(!m)return reject('Inventory product not found',404);
+   if(/^https:\/\//.test(m.specification.source||''))return json(await importProduct(env,user,m.specification.source));
+   const supplier=state.workspace.purchases.find(p=>p.lines.some(l=>l.id===m.id||l.name===m.name))?.supplier||'';
+   if(!/supplies\s*for\s*candles|candle\s*shack|hobbycraft/i.test(supplier))return reject('No saved supplier URL. Paste the exact product URL to retrieve its published information.',422);
+   const window=Math.floor(Date.now()/3600000),limit=await env.DB.prepare('INSERT INTO mf_supplier_limits(user_id,window,requests) VALUES(?,?,1) ON CONFLICT(user_id,window) DO UPDATE SET requests=requests+1 WHERE requests<60 RETURNING requests').bind(user.id,window).first();if(!limit)return reject('Supplier lookup limit reached. Try again later.',429);
+   const query=m.name.split(/\s[-–]\s|\s\(/)[0];let searchUrl:string,results:any[];
+   if(/candle\s*shack/i.test(supplier)){searchUrl=`https://candle-shack.co.uk/search/suggest.json?q=${encodeURIComponent(query)}&resources[type]=product&resources[limit]=10`;const data=JSON.parse(await readPublicPage(searchUrl,true));results=(data?.resources?.results?.products||[]).map((p:any)=>({url:new URL(p.url,'https://candle-shack.co.uk').toString()}))}
+   else if(/hobbycraft/i.test(supplier)){searchUrl=`https://www.hobbycraft.co.uk/search/?q=${encodeURIComponent(query)}`;const html=await readPublicPage(searchUrl);results=[...html.matchAll(/href=["']([^"']+\.html)["']/gi)].map(m=>({url:new URL(m[1],searchUrl).toString()}))}
+   else{searchUrl=`https://www.suppliesforcandles.co.uk/wp-json/wp/v2/search?search=${encodeURIComponent(query)}&subtype=product&per_page=20`;results=JSON.parse(await readPublicPage(searchUrl,true))}
+   const words=query.toLowerCase().match(/[a-z0-9]+/g)||[];
+   const links=(Array.isArray(results)?results:[]).slice(0,20).map((result:any)=>{try{return validateImportUrl(result.url).toString()}catch{return ''}}).filter(Boolean);
+   const scored=[...new Set(links)].map(url=>({url,score:words.filter(w=>decodeURIComponent(url).toLowerCase().includes(w)).length/Math.max(1,words.length)})).sort((a,b)=>b.score-a.score);
+   if(!scored[0]||scored[0].score<0.75)return reject('A reliable matching supplier page was not found. Paste the exact product URL; existing specifications are preserved.',422);
+   return json(await importProduct(env,user,scored[0].url));
+  }
+  if(action==='purchase-costing'){
+   const purchase=state.workspace.purchases.find(p=>p.id===body.purchaseId);if(!purchase)return reject('Purchase not found',404);
+   const current=state.purchaseCosting?.find(p=>p.purchaseId===purchase.id),expected=number(body.revision??0,'cost settings revision',0,1e9,true);
+   if((current?.revision||0)!==expected)return reject('Cost settings changed; reload.',409);
+   const data:any={source:text(body.source||'','tax record reference',1000),otherCosts:number(body.otherCosts??0,'other attributable purchase costs',0,1e6)};
+   for(const key of ['vatRatePct','shippingVatRatePct','otherVatRatePct'])if(body[key]!==undefined)data[key]=number(body[key],key,0,100);
+   if(body.pricesIncludeVat!==undefined){if(typeof body.pricesIncludeVat!=='boolean')return reject('Invalid VAT price basis');data.pricesIncludeVat=body.pricesIncludeVat}
+   for(const key of ['lineVatRates','originalLineValues'])if(body[key]){data[key]={};for(const [id,value] of Object.entries(object(body[key],key))){if(!purchase.lines.some(l=>l.id===id))return reject('Unknown purchase line');data[key][id]=number(value,key,0,key==='lineVatRates'?100:1e9)}}
+   if(current){const result=await env.DB.prepare('UPDATE mf_purchase_costing SET data=?,revision=revision+1,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE purchase_id=? AND revision=?').bind(JSON.stringify(data),user.id,purchase.id,expected).run();if(!result.meta.changes)return reject('Cost settings changed; reload.',409)}
+   else await env.DB.prepare('INSERT INTO mf_purchase_costing(purchase_id,data,updated_by) VALUES(?,?,?)').bind(purchase.id,JSON.stringify(data),user.id).run();
+   return json({saved:true});
+  }
   if(action==='purchase-valuation'){
    if(body.workspaceRevision!==state.workspaceRevision)return reject('Workspace changed; reload before changing valuation.',409);
    const purchase=state.workspace.purchases.find(p=>p.id===body.purchaseId);if(!purchase)return reject('Purchase not found',404);

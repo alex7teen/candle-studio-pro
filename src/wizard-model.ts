@@ -1,0 +1,29 @@
+import {calculate,mix,round,type ManufacturingState,type Recipe} from './manufacturing-model';
+export const wizardSteps=['Container or mould','Safety label','Wick','Wick adhesive','Base wax','Base fragrance','Base colour','Wax decorations','Lid & packaging','Production review'];
+export function wizardErrors(state:ManufacturingState,r:Recipe,step:number):string[]{
+ const base=r.layers[0],plan=calculate(state,r,1,{skipMaximum:true});
+ if(step===0)return (['Container','Layered/Decorative Candle'].includes(r.type)?!r.containerId:!r.cavityId)?['Select an Inventory container or a mould cavity before continuing.']:[];
+ if(step===1)return !r.packaging.some(p=>p.role==='safety-label'&&p.quantity>0)?['Select a safety label. Artwork must match the finished product classification.']:[];
+ if(step===2&&r.type!=='Wax Melt'&&!r.wickId)return ['Select a wick. Recommendations are starting points for burn testing.'];
+ if(step===3&&r.type!=='Wax Melt'&&!r.packaging.some(p=>p.role==='adhesive'&&p.quantity>0))return ['Select a wick adhesive or record your alternative fixing method in the notes.'].filter(()=>!r.notes.includes('Wick fixing:'));
+ if(step===4){if(!base.waxId)return ['Select a base wax.'];if(base.mode==='volume'?base.fillPct<=0:base.weightG<=0)return ['Enter a positive base quantity.'];return plan.issues.filter(i=>i.level==='red'&&['density_required','volume_uncalibrated','container_volume','volume_overflow','unit_conversion','invalid_weight','wax_use'].includes(i.code)).map(i=>i.message)}
+ if(step===5||step===6)return plan.issues.filter(i=>i.level==='red'&&i.component===base.name&&(/fragrance|dye|missing_ingredient/.test(i.code))).map(i=>i.message);
+ if(step===7)return plan.issues.filter(i=>i.level==='red'&&/decoration|calibrat/.test(i.code)).map(i=>i.message);
+ if(step===8)return r.packaging.some(p=>!p.itemId||p.quantity<=0)?['Complete each packaging selection and quantity, or remove the row.']:[];
+ return [];
+}
+export function manufacturingGuide(state:ManufacturingState,r:Recipe,count:number):string[]{
+ const plan=calculate(state,r,count,{skipMaximum:true}),names=(role:string)=>r.packaging.filter(p=>p.role===role).map(p=>state.materials.find(m=>m.id===p.itemId)?.name).join(', ');
+ const guide=[`Prepare and clean ${r.containerId?'the selected containers':'the selected mould and cavities'} for ${count} units.`,r.type==='Wax Melt'?'No wick is used for this wax-melt recipe.':`Centre the selected wick and secure it using ${names('adhesive')||'the fixing method recorded in the notes'}.`];
+ for(const l of r.layers){const wax=state.materials.find(m=>m.id===l.waxId),s=wax?.specification,verified=s?.verified&&s.source&&s.verifiedAt,amount=plan.layers.find(x=>x.id===l.id);
+  guide.push(`${l.name}: weigh ${round((amount?.waxG||0)*count*(1+r.lossPct/100))} g of ${wax?.name||'the selected wax'}${r.lossPct?' including the recorded production-loss allowance':''}.`);
+  guide.push(verified?(s.meltGuidance||`Melt according to the cited supplier document${s.meltC!==undefined?` (${s.meltC} °C recorded guidance)`:': melting guidance not verified'}.`):'Melting guidance Not Verified: review the product document before heating.');
+  if(l.fragrancePct>0)guide.push(`Add ${round((amount?.fragranceG||0)*count*(1+r.lossPct/100))} g fragrance. ${verified?(s.mixGuidance|| (s.mixC!==undefined?`Recorded mixing temperature: ${s.mixC} °C.`:'Addition temperature Not Verified — check the applicable document.')):'Mixing temperature Not Verified.'}`);
+  if(l.dyePct>0)guide.push(`Weigh ${round((amount?.dyeG||0)*count*(1+r.lossPct/100))} g dye and follow its verified usage and dissolution instructions.`);
+  guide.push(verified?(s.pourGuidance||`Pour this layer${s.pourC!==undefined?` at the recorded ${s.pourC} °C`:': pouring temperature Not Verified'}.`):'Pouring guidance Not Verified — review before pouring.');
+ }
+ for(const f of plan.figures){guide.push(`${f.name}: use ${f.premade} pre-made figures; manufacture exactly ${f.manufacture} new figures from the saved independent formulation (${f.rounds} rounds; ${f.finalCavities} cavities in the last round).`);const d=(r.decorationSnapshots||state.decorations).find(d=>d.id===f.decorationId);if(d&&f.manufacture&&f.weightG){const m=mix(f.weightG,d.formulation.fragrancePct,d.formulation.dyePct,'mixture'),factor=f.manufacture*(1+r.lossPct/100),wax=state.materials.find(m=>m.id===d.formulation.waxId),s=wax?.specification,verified=s?.verified&&s.source&&s.verifiedAt;guide.push(`${f.name}: measure ${round(m.waxG*factor)} g ${wax?.name||'wax'}, ${round(m.fragranceG*factor)} g fragrance and ${round(m.dyeG*factor)} g dye. Melting: ${verified?(s.meltGuidance|| (s.meltC!==undefined?`${s.meltC} °C`:'Not Verified')):'Not Verified'}; pouring: ${verified?(s.pourGuidance||(s.pourC!==undefined?`${s.pourC} °C`:'Not Verified')):'Not Verified'}.`)}}
+ guide.push('Allow each component to set according to its verified supplier guidance; no setting time is assumed.','Measure physical fit, headspace and wick clearance before assembly. Complete assembly only after reviewing these observations.');
+ for(const id of new Set([...r.layers.map(l=>l.waxId),...r.decorations.map(p=>(r.decorationSnapshots||state.decorations).find(d=>d.id===p.decorationId)?.formulation.waxId)])){const m=state.materials.find(m=>m.id===id);guide.push(`${m?.name||'Component wax'} cure: ${m?.specification.verified&&m.specification.cure?m.specification.cure:'Not Verified — obtain applicable guidance'}.`)}
+ guide.push('Perform and record burn testing on this exact design before approving it for sale. Record applicable compliance documentation and finished-mixture classification.',`Apply ${names('safety-label')||'the selected safety label'} only after reviewing its suitability and required product-specific information.`,'Apply the selected lids and packaging, checking quantities against the production sheet.');return guide;
+}
