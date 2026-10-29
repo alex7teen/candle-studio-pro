@@ -86,7 +86,9 @@ function readCookie(req: Request, name: string) {
 }
 async function remote(url: string, init: RequestInit = {}): Promise<any> {
   // Fixed provider hosts only; do not follow redirects carrying credentials.
-  const res = await fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(15000) });
+  // Workers supports follow/manual only: redirect:"error" throws before I/O.
+  const res = await fetch(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(15000) });
+  if (res.status >= 300 && res.status < 400) return fail('provider_redirect_blocked', 502);
   let data: any;
   try { data = await res.json(); } catch { return fail('provider_unavailable', 502); }
   if (!res.ok || data.errors || data.error && data.error.code !== 'ok') {

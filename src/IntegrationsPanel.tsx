@@ -32,6 +32,7 @@ const messages: Record<string, string> = {
   provider_rate_limited: 'This service is busy. Wait a moment and try again.',
   provider_request_failed: 'The service could not provide this data. Check your permissions or reconnect.',
   provider_unavailable: 'The service is temporarily unavailable. Please try again.',
+  provider_redirect_blocked: 'The service redirected its authorization request. Access was stopped to protect your credentials.',
   connection_changed: 'This connection changed in another session. Refresh the page and try again.',
 };
 async function request(path: string, body: unknown = {}) {

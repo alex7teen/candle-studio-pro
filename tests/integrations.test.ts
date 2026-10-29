@@ -155,6 +155,7 @@ describe('provider connections with synthetic responses', () => {
     const replay = await handle(new Request(callback));
     expect(replay.headers.get('location')).toContain('invalid_authorization');
     expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls.every(([, init]) => init?.redirect === 'manual')).toBe(true);
     await handle(post('shopify/synthetic.myshopify.com/disconnect'));
     expect(db.prepare('SELECT count(*) AS n FROM integration_accounts').get()!.n).toBe(0);
   });
@@ -217,5 +218,14 @@ describe('provider connections with synthetic responses', () => {
     const result = await handle(returnRequest('etsy', flow.state, flow.cookie));
     expect(result.headers.get('location')).toContain('provider_request_failed');
     expect(result.headers.get('location')).not.toContain(token);
+  });
+  it('rejects provider redirects before parsing or following them with credentials', async () => {
+    const flow = await begin('etsy');
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: 'https://untrusted.invalid' } }));
+    const result = await handle(returnRequest('etsy', flow.state, flow.cookie));
+    expect(result.headers.get('location')).toContain('provider_redirect_blocked');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][1]?.redirect).toBe('manual');
+    expect(db.prepare('SELECT count(*) AS n FROM integration_accounts').get()!.n).toBe(0);
   });
 });
